@@ -24,6 +24,7 @@
 
 import os
 import json
+import base64
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -41,23 +42,68 @@ from dash import Dash
 EXCEL_PATH = "data.xlsx"        # абсолютный или относительный путь
 EXCEL_SHEET = "data"            # имя листа
 
-# ── Цвета ────────────────────────────────────────
-GREEN_DARK   = "rgba(0, 150, 57, 1)"
-GREEN_MID    = "rgba(0, 150, 57, 0.7)"
-GREEN_LIGHT  = "rgba(0, 150, 57, 0.5)"
-GREEN_TRANSP = "rgba(0, 150, 57, 0.3)"
-GREEN        = "rgba(155, 189, 30, 1)"
-YELLOW       = "rgba(234, 170, 0, 0.8)"
-YELLOW_LIGHT = "rgba(234, 170, 0, 0.5)"
-YELLOW_TRANSP = "rgba(234, 170, 0, 0.3)"
-ORANGE        = "rgba(237, 109, 27, 1)"
-ORANGE_MID    = "rgba(237, 109, 27, 0.7)"
-ORANGE_LIGHT  = "rgba(237, 109, 27, 0.5)"
-ORANGE_TRANSP = "rgba(237, 109, 27, 0.3)"
+# ── Мероприятия по снижению УРЭ ───────────────────
+# Excel с мероприятиями кладите (или загружайте через интерфейс, вкладка
+# «Рейтинг скважин») сюда — файл автоматически подхватится дашбордом
+# и будет доступен по прямой ссылке /meropriyatiya.xlsx
+MEROPRIYATIYA_DIR  = "assets"
+MEROPRIYATIYA_PATH = os.path.join(MEROPRIYATIYA_DIR, "meropriyatiya.xlsx")
+MEROPRIYATIYA_COLUMNS = [
+    "Скважина", "Мероприятие", "Рекомендации", "Возможная экономия электроэнергии, кВт",
+]
+
+# ── Цвета (палитра — по референсу) ────────────────
+GREEN_DARK   = "rgba(34, 197, 94, 1)"     # #22C55E — «норма»
+GREEN_MID    = "rgba(34, 197, 94, 0.7)"
+GREEN_LIGHT  = "rgba(34, 197, 94, 0.5)"
+GREEN_TRANSP = "rgba(34, 197, 94, 0.3)"
+GREEN        = "rgba(16, 185, 129, 1)"    # #10B981 — доп. оттенок зелёного (для тепловой карты)
+YELLOW       = "rgba(245, 158, 11, 1)"    # #F59E0B — «внимание» (amber)
+YELLOW_LIGHT = "rgba(245, 158, 11, 0.5)"
+YELLOW_TRANSP = "rgba(245, 158, 11, 0.3)"
+ORANGE        = "rgba(239, 68, 68, 1)"    # #EF4444 — «критично» / акцент отклонения (красный)
+ORANGE_MID    = "rgba(239, 68, 68, 0.7)"
+ORANGE_LIGHT  = "rgba(239, 68, 68, 0.5)"
+ORANGE_TRANSP = "rgba(239, 68, 68, 0.3)"
+BLUE         = "rgba(79, 124, 255, 1)"    # #4F7CFF — основной / инфо
+BLUE_LIGHT   = "rgba(79, 124, 255, 0.5)"
+PURPLE       = "rgba(139, 92, 246, 1)"    # #8B5CF6 — энергопотребление
+TEAL         = "rgba(6, 182, 212, 1)"     # #06B6D4 — жидкость/доп. акцент
 GREY_DARK    = "#546e7a"
 GREY_LIGHT   = "#b0bec5"
-BG           = "#f4f6f8"
-CARD_BG      = "#ffffff"
+BG           = "#f5f6fa"      # светлый (почти белый) фон страницы
+CARD_BG      = "#ffffff"      # белые карточки
+TEXT_DARK    = "#14171c"      # чёрный текст (основной)
+TEXT_MUTED   = "#6b7280"      # приглушённый серый для подписей
+BORDER_SOFT  = "#e9eaef"
+
+
+def with_alpha(color_str: str, a: float) -> str:
+    """Возвращает тот же цвет с новой прозрачностью — для полупрозрачных блоков.
+    Понимает и rgba(...)/rgb(...), и HEX (#rrggbb)."""
+    color_str = color_str.strip()
+    if color_str.startswith("#"):
+        hex_str = color_str.lstrip("#")
+        if len(hex_str) == 3:
+            hex_str = "".join(c * 2 for c in hex_str)
+        r = int(hex_str[0:2], 16)
+        g = int(hex_str[2:4], 16)
+        b = int(hex_str[4:6], 16)
+        return f"rgba({r}, {g}, {b}, {a})"
+    inner = color_str[color_str.find("(") + 1: color_str.find(")")]
+    r, g, b = [p.strip() for p in inner.split(",")[:3]]
+    return f"rgba({r}, {g}, {b}, {a})"
+
+
+def glow(rgba_str: str, a: float = 0.18) -> str:
+    """Мягкая цветная тень под карточкой в стиле референса."""
+    return f"0 6px 20px {with_alpha(rgba_str, a)}, 0 1px 3px rgba(20,23,28,0.04)"
+
+
+CARD_STYLE = {
+    "background": CARD_BG, "border": f"1px solid {BORDER_SOFT}", "borderRadius": "16px",
+    "padding": "16px", "boxShadow": glow(GREY_DARK, 0.08),
+}
 
 MODES = ["в работе", "в накоплении", "в простое", "в бездействии"]
 MODE_COLORS = {
@@ -75,6 +121,48 @@ PERIODS = {
 }
 
 # ════════════════════════════════════════════════
+#  МИНИМАЛИСТИЧНЫЕ SVG-ИКОНКИ
+# ════════════════════════════════════════════════
+
+import urllib.parse as _urlparse
+
+ICON_PATHS = {
+    "bolt":        '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>',
+    "plug":        '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>',
+    "droplet":     '<path d="M12 3c4 5 7 8.6 7 12.2A7 7 0 1 1 5 15.2C5 11.6 8 8 12 3z"/>',
+    "barrel":      '<rect x="6" y="4" width="12" height="16" rx="3"/><line x1="6" y1="10" x2="18" y2="10"/><line x1="6" y1="14" x2="18" y2="14"/>',
+    "gauge":       '<path d="M4 16a8 8 0 0 1 16 0"/><line x1="12" y1="16" x2="16" y2="10"/><circle cx="12" cy="16" r="1.3" fill="currentColor" stroke="none"/>',
+    "clipboard":   '<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V2h6v2"/><line x1="8" y1="10.5" x2="16" y2="10.5"/><line x1="8" y1="14.5" x2="16" y2="14.5"/>',
+    "trend":       '<polyline points="4,17 9,10.5 13,13.5 20,5"/><polyline points="14,5 20,5 20,11"/>',
+    "grid":        '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    "home":        '<path d="M4 11 12 4 20 11"/><path d="M6 10v9h5v-5h2v5h5v-9"/>',
+    "search":      '<circle cx="10" cy="10" r="6.2"/><line x1="15" y1="15" x2="20.5" y2="20.5"/>',
+    "close":       '<line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>',
+    "pin":         '<path d="M12 21s7-7.6 7-12.2A7 7 0 1 0 5 8.8C5 13.4 12 21 12 21z"/><circle cx="12" cy="8.8" r="2.4"/>',
+    "chart-line":  '<polyline points="4,18 9,11 13,14 20,6"/>',
+    "list":        '<line x1="5" y1="6" x2="19" y2="6"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="5" y1="18" x2="19" y2="18"/>',
+    "refresh":     '<path d="M4 12a8 8 0 0 1 13.7-5.7L20 8"/><path d="M20 4v4h-4"/><path d="M20 12a8 8 0 0 1-13.7 5.7L4 16"/><path d="M4 20v-4h4"/>',
+    "activity":    '<polyline points="3,12 8,12 10,6 14,18 16,12 21,12"/>',
+    "bulb":        '<path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.4 10.9c.6.5 1 1.1 1.1 1.9v.2h4.6v-.2c0-.8.5-1.4 1.1-1.9A6 6 0 0 0 12 3z"/>',
+    "upload":      '<path d="M12 3v12"/><polyline points="7,8 12,3 17,8"/><path d="M5 21h14"/>',
+    "link":        '<path d="M9 15l6-6"/><path d="M7 10 4.6 12.4a4 4 0 0 0 5.7 5.7L13 15.7"/><path d="M17 14l2.4-2.4a4 4 0 0 0-5.7-5.7L11 8.3"/>',
+    "chevron":     '<polyline points="9,6 15,12 9,18"/>',
+}
+
+
+def svg_icon(name: str, color: str = TEXT_DARK, size: int = 18, stroke_width: float = 1.8):
+    """Строит минималистичную линейную SVG-иконку без внешних зависимостей."""
+    path = ICON_PATHS.get(name, ICON_PATHS["bolt"])
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="{size}" height="{size}" '
+        f'fill="none" stroke="{color}" stroke-width="{stroke_width}" '
+        f'stroke-linecap="round" stroke-linejoin="round">{path}</svg>'
+    )
+    encoded = _urlparse.quote(svg)
+    return html.Img(src=f"data:image/svg+xml;utf8,{encoded}",
+                     style={"width": f"{size}px", "height": f"{size}px", "display": "block"})
+
+# ════════════════════════════════════════════════
 #  ЗАГРУЗКА И ГЕНЕРАЦИЯ ДЕМО-ДАННЫХ
 # ════════════════════════════════════════════════
 
@@ -88,6 +176,18 @@ def generate_demo_data() -> pd.DataFrame:
         "Месторождение Б": ["2206","2210","2211","2402","2404","2405"],
         "Месторождение В": ["2406","2503","2504","2602","2702","2703","10р"],
     }
+
+    # ── профиль каждой скважины: у всех разное характерное отклонение
+    #    УРЭ факт от расчёта, поэтому цвета на тепловой карте различаются
+    well_profiles = {}
+    dev_pool = [1, 2, 4, 6, 8, 11, 14, 17, 21, 26, 31, 38]
+    for field, wlist in wells_by_field.items():
+        for w in wlist:
+            well_profiles[w] = {
+                "base_ure": np.random.uniform(7, 26),
+                "dev":      np.random.choice(dev_pool),
+            }
+
     rows = []
     # записи каждые 8 часов за 30 дней
     for days_back in range(30, -1, -1):
@@ -96,7 +196,10 @@ def generate_demo_data() -> pd.DataFrame:
             for field, wlist in wells_by_field.items():
                 for w in wlist:
                     base = np.random.uniform(40, 95)
-                    ure  = np.random.uniform(6, 44)
+                    prof = well_profiles[w]
+                    ure_f = max(prof["base_ure"] + np.random.normal(0, 1.1), 1.0)
+                    dev_now = prof["dev"] + np.random.normal(0, 1.8)
+                    ure_p = max(ure_f / (1 + dev_now / 100), 0.5)
                     mode = np.random.choice(MODES, p=[0.55, 0.02, 0.03, 0.40])
                     rows.append({
                         "timestamp":        ts,
@@ -106,8 +209,8 @@ def generate_demo_data() -> pd.DataFrame:
                         "electricity_plan": round(base * 0.97 * 1000),
                         "liquid":           round(np.random.uniform(2000, 5000)),
                         "oil":              round(np.random.uniform(200, 600)),
-                        "ure_fact":         round(ure, 2),
-                        "ure_plan":         round(ure * 0.96, 2),
+                        "ure_fact":         round(ure_f, 2),
+                        "ure_plan":         round(ure_p, 2),
                         "mode":             mode,
                     })
     return pd.DataFrame(rows)
@@ -387,26 +490,246 @@ def make_consumption(df: pd.DataFrame):
 
 
 def make_trend(df: pd.DataFrame):
-    """Линейный тренд УРЭ факт по времени."""
-    agg = df.groupby("timestamp")["ure_fact"].mean().reset_index()
-    fig = go.Figure(go.Scatter(
-        x=agg["timestamp"], y=agg["ure_fact"],
-        mode="lines+markers", line=dict(color=ORANGE, width=2),
-        marker=dict(size=4), name="УРЭ факт",
-        hovertemplate="%{x|%d.%m %H:%M}<br>УРЭ: %{y:.2f} кВт·ч/м³<extra></extra>"
+    """Тренд УРЭ факт/расчёт по времени."""
+    agg = df.groupby("timestamp").agg(ure_fact=("ure_fact", "mean"), ure_plan=("ure_plan", "mean")).reset_index()
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=agg["timestamp"], y=agg["ure_plan"], mode="lines", name="УРЭ расч",
+        line=dict(color=GREY_LIGHT, width=2, dash="dot"),
+        hovertemplate="%{x|%d.%m %H:%M}<br>УРЭ расч: %{y:.2f} кВт·ч/м³<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=agg["timestamp"], y=agg["ure_fact"], mode="lines+markers", name="УРЭ факт",
+        line=dict(color=ORANGE, width=2), marker=dict(size=4), fill="tonexty",
+        fillcolor=with_alpha(ORANGE, 0.08),
+        hovertemplate="%{x|%d.%m %H:%M}<br>УРЭ факт: %{y:.2f} кВт·ч/м³<extra></extra>",
     ))
     fig.update_layout(
-        height=180, margin=dict(l=50,r=20,t=20,b=40),
+        height=240, margin=dict(l=50, r=20, t=25, b=40),
         paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
         yaxis=dict(gridcolor="#eeeeee", title="кВт·ч/м³", title_font=dict(size=10)),
         xaxis=dict(gridcolor="#eeeeee"),
-        font={"family":"Arial"}
+        legend=dict(orientation="h", y=1.15, x=0, font=dict(size=10)),
+        font={"family": "Arial", "color": TEXT_DARK},
     )
     return fig
 
 
+def make_consumption_trend(df: pd.DataFrame):
+    """Суточная динамика потребления электроэнергии факт/план."""
+    d = df.copy()
+    d["date"] = d["timestamp"].dt.date
+    agg = d.groupby("date").agg(
+        fact=("electricity_fact", "sum"), plan=("electricity_plan", "sum")
+    ).reset_index()
+    agg["fact_k"] = agg["fact"] / 1000
+    agg["plan_k"] = agg["plan"] / 1000
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=agg["date"], y=agg["plan_k"], name="План", mode="lines",
+        line=dict(color=GREY_LIGHT, width=2, dash="dot"),
+        hovertemplate="%{x|%d.%m}<br>План: %{y:.0f} тыс.кВт·ч<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=agg["date"], y=agg["fact_k"], name="Факт", mode="lines", fill="tozeroy",
+        line=dict(color=GREEN_DARK, width=2), fillcolor=with_alpha(GREEN_DARK, 0.10),
+        hovertemplate="%{x|%d.%m}<br>Факт: %{y:.0f} тыс.кВт·ч<extra></extra>",
+    ))
+    fig.update_layout(
+        height=240, margin=dict(l=50, r=20, t=25, b=40),
+        paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+        yaxis=dict(gridcolor="#eeeeee", title="тыс.кВт·ч", title_font=dict(size=10)),
+        xaxis=dict(gridcolor="#eeeeee"),
+        legend=dict(orientation="h", y=1.15, x=0, font=dict(size=10)),
+        font={"family": "Arial", "color": TEXT_DARK},
+    )
+    return fig
+
+
+def make_overconsumption_bar(df: pd.DataFrame, top_n: int = 8):
+    """ТОП скважин по суммарному перерасходу электроэнергии (факт − план)."""
+    agg = df.groupby("well").agg(
+        fact=("electricity_fact", "sum"), plan=("electricity_plan", "sum"),
+    ).reset_index()
+    agg["excess"] = agg["fact"] - agg["plan"]
+    agg = agg[agg["excess"] > 0].sort_values("excess", ascending=False).head(top_n)
+    if agg.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            annotations=[dict(text="Перерасход не обнаружен", xref="paper", yref="paper",
+                               x=0.5, y=0.5, showarrow=False, font=dict(size=13, color=TEXT_MUTED))],
+            paper_bgcolor=CARD_BG, height=240,
+        )
+        return fig
+    agg = agg.sort_values("excess", ascending=True)
+    fig = go.Figure(go.Bar(
+        x=agg["excess"] / 1000, y=agg["well"].astype(str), orientation="h",
+        marker_color=with_alpha(ORANGE, 0.75),
+        text=[f"{v/1000:.1f}" for v in agg["excess"]], textposition="outside",
+        textfont=dict(size=11, color=TEXT_DARK),
+        hovertemplate="Скв. %{y}: +%{x:.1f} тыс.кВт·ч сверх плана<extra></extra>",
+    ))
+    fig.update_layout(
+        height=240, margin=dict(l=50, r=50, t=15, b=30),
+        paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+        xaxis=dict(title="тыс.кВт·ч сверх плана", title_font=dict(size=10), showgrid=False),
+        yaxis=dict(tickfont=dict(size=11)),
+        font={"family": "Arial", "color": TEXT_DARK},
+    )
+    return fig
+
+
+def build_quick_summary(df: pd.DataFrame):
+    """Карточка «Быстрая сводка» — доли скважин по статусу УРЭ (как на референсе)."""
+    well_agg = df.groupby("well").agg(
+        ure_fact=("ure_fact", "mean"), ure_plan=("ure_plan", "mean"),
+    ).reset_index()
+    well_agg["dev"] = np.where(well_agg["ure_plan"] != 0,
+                                (well_agg["ure_fact"] - well_agg["ure_plan"]) / well_agg["ure_plan"] * 100, 0)
+    total = len(well_agg)
+    if total == 0:
+        return html.Div()
+
+    norm = int((well_agg["dev"] <= 5).sum())
+    warn = int(((well_agg["dev"] > 5) & (well_agg["dev"] <= 15)).sum())
+    crit = int((well_agg["dev"] > 15).sum())
+
+    rows = [
+        ("В норме",              norm, GREEN_DARK),
+        ("Незначит. отклонения", warn, YELLOW),
+        ("Критические отклонения", crit, ORANGE),
+    ]
+
+    items = []
+    for label, count, color in rows:
+        pct = round(count / total * 100) if total else 0
+        items.append(html.Div([
+            html.Div([
+                html.Span(style={
+                    "display": "inline-block", "width": "8px", "height": "8px", "borderRadius": "50%",
+                    "background": color, "marginRight": "8px",
+                }),
+                html.Span(label, style={"fontSize": "12.5px", "color": TEXT_DARK, "flex": "1"}),
+                html.Span(str(count), style={"fontSize": "12.5px", "fontWeight": "700", "color": TEXT_DARK, "marginRight": "8px"}),
+                html.Span(f"{pct}%", style={"fontSize": "11px", "color": TEXT_MUTED, "width": "34px", "textAlign": "right"}),
+            ], style={"display": "flex", "alignItems": "center", "marginBottom": "4px"}),
+            html.Div(html.Div(style={
+                "width": f"{pct}%", "height": "6px", "borderRadius": "4px", "background": color,
+            }), style={"background": "#eef0f4", "borderRadius": "4px", "height": "6px", "marginBottom": "12px"}),
+        ]))
+
+    return html.Div([
+        html.Div([
+            html.Span("Быстрая сводка", style={"fontWeight": "700", "fontSize": "14px", "color": TEXT_DARK}),
+        ], style={"marginBottom": "12px"}),
+        html.Div(items),
+    ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+              "padding": "16px", "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"})
+
+
+def generate_insights(df: pd.DataFrame):
+    """Автоматические текстовые выводы по фонду скважин за выбранный период."""
+    if df.empty:
+        return []
+
+    well_agg = df.groupby(["field", "well"]).agg(
+        ure_fact=("ure_fact", "mean"), ure_plan=("ure_plan", "mean"),
+        fact=("electricity_fact", "sum"), plan=("electricity_plan", "sum"),
+    ).reset_index()
+    well_agg["dev"] = np.where(well_agg["ure_plan"] != 0,
+                                (well_agg["ure_fact"] - well_agg["ure_plan"]) / well_agg["ure_plan"] * 100, 0)
+
+    total_wells = len(well_agg)
+    critical = well_agg[well_agg["dev"] > 15]
+    excess_total = (well_agg["fact"] - well_agg["plan"]).clip(lower=0).sum()
+
+    field_dev = well_agg.groupby("field")["dev"].mean().sort_values(ascending=False)
+    worst_field = field_dev.index[0] if len(field_dev) else "—"
+    best_field = field_dev.index[-1] if len(field_dev) else "—"
+
+    worst_well = well_agg.sort_values("dev", ascending=False).iloc[0] if total_wells else None
+
+    insights = []
+    if critical.shape[0]:
+        insights.append({
+            "icon": "trend", "color": ORANGE,
+            "title": f"Высокое отклонение УРЭ у {critical.shape[0]} скважин",
+            "text": f"{critical.shape[0]} из {total_wells} скважин "
+                    f"({critical.shape[0]/total_wells*100:.0f}%) превышают +15% от плана.",
+        })
+    insights.append({
+        "icon": "bolt", "color": GREEN_DARK,
+        "title": f"Перерасход энергопотребления",
+        "text": f"Суммарный перерасход электроэнергии за период составляет: "
+                f"{excess_total/1000:,.0f} тыс.кВт·ч.".replace(",", " "),
+    })
+    if worst_field != best_field:
+        insights.append({
+            "icon": "pin", "color": YELLOW,
+            "title": f"Месторождение «{worst_field}» — зона риска",
+            "text": f"Среднее отклонение УРЭ {field_dev.iloc[0]:.1f}%, тогда как у «{best_field}» "
+                    f"всего {field_dev.iloc[-1]:.1f}%.",
+        })
+    if worst_well is not None:
+        insights.append({
+            "icon": "gauge", "color": ORANGE,
+            "title": f"Скважина {worst_well['well']} — максимальное отклонение",
+            "text": f"{worst_well['field']}: {worst_well['dev']:+.1f}% от расчётного УРЭ."
+                    f"Рекомендуется рассмотреть мероприятие по снижению УРЭ на карточке скважины.",
+        })
+
+    return insights
+
+
+def build_rating_table(df: pd.DataFrame):
+    """Полный рейтинг скважин фонда — сортируемая таблица."""
+    from dash import dash_table
+
+    agg = df.groupby(["field", "well"]).agg(
+        electricity_fact=("electricity_fact", "sum"),
+        electricity_plan=("electricity_plan", "sum"),
+        liquid=("liquid", "sum"),
+        oil=("oil", "sum"),
+        ure_fact=("ure_fact", "mean"),
+        ure_plan=("ure_plan", "mean"),
+    ).reset_index()
+    agg["dev_pct"] = np.where(agg["ure_plan"] != 0,
+                               (agg["ure_fact"] - agg["ure_plan"]) / agg["ure_plan"] * 100, 0).round(1)
+    agg = agg.sort_values("dev_pct", ascending=False).round(2)
+    agg = agg.rename(columns={
+        "field": "Месторождение", "well": "Скважина",
+        "electricity_fact": "ЭЭ факт, кВт·ч", "electricity_plan": "ЭЭ расч, кВт·ч",
+        "liquid": "Жидкость, м³", "oil": "Нефть, т",
+        "ure_fact": "УРЭ факт", "ure_plan": "УРЭ расч", "dev_pct": "Откл. УРЭ, %",
+    })
+
+    return dash_table.DataTable(
+        data=agg.to_dict("records"),
+        columns=[{"name": c, "id": c} for c in agg.columns],
+        sort_action="native", filter_action="native", page_size=15,
+        style_table={"overflowX": "auto"},
+        style_header={
+            "backgroundColor": "#f7f8fb", "fontWeight": "700", "color": TEXT_DARK,
+            "border": "none", "borderBottom": f"1px solid {BORDER_SOFT}", "fontSize": "12px",
+        },
+        style_cell={
+            "fontFamily": "Arial", "fontSize": "12px", "color": TEXT_DARK,
+            "padding": "8px 10px", "border": "none", "borderBottom": f"1px solid {BORDER_SOFT}",
+            "backgroundColor": CARD_BG,
+        },
+        style_data_conditional=[
+            {"if": {"filter_query": "{Откл. УРЭ, %} > 15", "column_id": "Откл. УРЭ, %"},
+             "color": ORANGE, "fontWeight": "700"},
+            {"if": {"filter_query": "{Откл. УРЭ, %} <= 5", "column_id": "Откл. УРЭ, %"},
+             "color": GREEN_DARK, "fontWeight": "700"},
+        ],
+    )
+
+
 # ════════════════════════════════════════════════
 #  СТАТУС / ОТКЛОНЕНИЕ СКВАЖИНЫ
+
 # ════════════════════════════════════════════════
 
 def well_status(dev_pct: float):
@@ -419,12 +742,37 @@ def well_status(dev_pct: float):
 
 
 # ════════════════════════════════════════════════
-#  ЛЕВАЯ ПАНЕЛЬ — СПИСОК СКВАЖИН (кликабельный)
+#  ЛЕВАЯ ПАНЕЛЬ — МЕСТОРОЖДЕНИЯ → СКВАЖИНЫ (поиск + сворачивание)
 # ════════════════════════════════════════════════
 
-def build_sidebar_wells(df: pd.DataFrame):
+def _well_card(row):
+    color, _label = well_status(row["dev"])
+    return html.Div([
+        html.Div([
+            html.Span(style={
+                "display": "inline-block", "width": "8px", "height": "8px",
+                "borderRadius": "50%", "background": color, "marginRight": "7px",
+                "flexShrink": "0",
+            }),
+            html.Span(f"Скв. {row['well']}", style={"fontWeight": "700", "fontSize": "13px", "color": TEXT_DARK}),
+            html.Span(f"{row['dev']:+.1f}%", style={
+                "marginLeft": "auto", "fontSize": "11px", "fontWeight": "700", "color": color
+            }),
+        ], style={"display": "flex", "alignItems": "center"}),
+        html.Div(f"УРЭ {row['ure_fact']:.1f} кВт·ч/м³",
+                 style={"fontSize": "11px", "color": TEXT_MUTED, "marginTop": "2px"}),
+    ],
+        id={"type": "well-card", "index": str(row["well"])}, n_clicks=0,
+        style={
+            "background": with_alpha(color, 0.06), "border": f"1px solid {with_alpha(color, 0.18)}",
+            "borderRadius": "10px", "padding": "8px 10px", "marginBottom": "6px", "cursor": "pointer",
+        }
+    )
+
+
+def build_sidebar_wells(df: pd.DataFrame, search_term: str = ""):
     if df.empty:
-        return html.Div("Нет данных", style={"fontSize": "12px", "color": "#999", "padding": "8px"})
+        return html.Div("Нет данных", style={"fontSize": "12px", "color": TEXT_MUTED, "padding": "8px"})
 
     latest = df.sort_values("timestamp").groupby("well").last().reset_index()[["well", "field"]]
     agg = df.groupby("well").agg(
@@ -434,34 +782,42 @@ def build_sidebar_wells(df: pd.DataFrame):
     ).reset_index()
     agg["dev"] = np.where(agg["ure_plan"] != 0,
                            (agg["ure_fact"] - agg["ure_plan"]) / agg["ure_plan"] * 100, 0)
-    agg = agg.merge(latest, on="well", how="left").sort_values("dev", ascending=False)
+    agg = agg.merge(latest, on="well", how="left")
 
-    cards = []
-    for _, row in agg.iterrows():
-        color, _label = well_status(row["dev"])
-        cards.append(html.Div([
-            html.Div([
-                html.Span(style={
-                    "display": "inline-block", "width": "8px", "height": "8px",
-                    "borderRadius": "50%", "background": color, "marginRight": "7px",
-                    "flexShrink": "0",
+    term = (search_term or "").strip().lower()
+
+    groups = []
+    for field_name in sorted(agg["field"].dropna().unique()):
+        g = agg[agg["field"] == field_name].sort_values("dev", ascending=False)
+        if term:
+            g = g[g["well"].astype(str).str.lower().str.contains(term)]
+        if g.empty:
+            continue
+
+        well_cards = [_well_card(row) for _, row in g.iterrows()]
+
+        groups.append(html.Details([
+            html.Summary([
+                svg_icon("pin", color=BLUE, size=14),
+                html.Span(field_name, style={
+                    "marginLeft": "6px", "fontWeight": "700", "fontSize": "13px", "color": TEXT_DARK,
                 }),
-                html.Span(f"Скв. {row['well']}", style={"fontWeight": "700", "fontSize": "13px"}),
-                html.Span(f"{row['dev']:+.1f}%", style={
-                    "marginLeft": "auto", "fontSize": "11px", "fontWeight": "700", "color": color
+                html.Span(str(len(g)), style={
+                    "marginLeft": "auto", "fontSize": "11px", "color": TEXT_MUTED,
+                    "background": "#f0f1f5", "padding": "1px 8px", "borderRadius": "9px",
                 }),
-            ], style={"display": "flex", "alignItems": "center"}),
-            html.Div(f"{row['field']} · УРЭ {row['ure_fact']:.1f} кВт·ч/м³",
-                     style={"fontSize": "11px", "color": "#888", "marginTop": "2px",
-                            "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis"}),
-        ],
-            id={"type": "well-card", "index": str(row["well"])}, n_clicks=0,
-            style={
-                "background": "#fff", "border": "1px solid #e0e0e0", "borderRadius": "7px",
-                "padding": "8px 10px", "marginBottom": "6px", "cursor": "pointer",
-            }
-        ))
-    return html.Div(cards)
+            ], style={
+                "display": "flex", "alignItems": "center", "cursor": "pointer",
+                "padding": "6px 4px", "gap": "2px",
+            }),
+            html.Div(well_cards, style={"marginTop": "4px", "marginLeft": "2px"}),
+        ], open=True, style={
+            "marginBottom": "6px", "borderBottom": f"1px solid {BORDER_SOFT}", "paddingBottom": "6px",
+        }))
+
+    if not groups:
+        return html.Div("Скважины не найдены", style={"fontSize": "12px", "color": TEXT_MUTED, "padding": "8px"})
+    return html.Div(groups)
 
 
 # ════════════════════════════════════════════════
@@ -523,6 +879,78 @@ def build_well_compare_bar(df_period: pd.DataFrame, well: str):
     return fig
 
 
+def load_meropriyatiya() -> pd.DataFrame:
+    """Читает Excel с мероприятиями по снижению УРЭ (если загружен)."""
+    if os.path.exists(MEROPRIYATIYA_PATH):
+        try:
+            df = pd.read_excel(MEROPRIYATIYA_PATH)
+            df.columns = [str(c).strip() for c in df.columns]
+            if "Скважина" in df.columns:
+                df["Скважина"] = df["Скважина"].astype(str)
+            return df
+        except Exception:
+            pass
+    return pd.DataFrame(columns=MEROPRIYATIYA_COLUMNS)
+
+
+def build_meropriyatiya_section(well: str):
+    """Раздел «Мероприятия по снижению УРЭ» для конкретной скважины — отдельный лист карточки."""
+    df = load_meropriyatiya()
+    file_exists = os.path.exists(MEROPRIYATIYA_PATH)
+
+    link_row = html.Div([
+        svg_icon("link", color=GREEN_DARK, size=14),
+        html.A("Открыть полный Excel-файл с мероприятиями", href="/meropriyatiya.xlsx",
+               target="_blank", style={"marginLeft": "6px", "fontSize": "12px", "color": GREEN_DARK,
+                                        "fontWeight": "600", "textDecoration": "none"}),
+    ], style={"display": "flex", "alignItems": "center", "marginBottom": "10px"}) if file_exists else None
+
+    if not file_exists or df.empty:
+        body = html.Div([
+            html.Div("Мероприятия ещё не загружены.", style={"fontSize": "13px", "color": TEXT_DARK, "fontWeight": "600"}),
+            html.Div(
+                "Загрузите Excel-файл с колонками «Скважина, Мероприятие, Рекомендации, "
+                "Возможная экономия электроэнергии, кВт» на вкладке «Рейтинг скважин» → блок "
+                "«Мероприятия по снижению УРЭ», либо поместите файл вручную по пути "
+                f"{MEROPRIYATIYA_PATH} рядом со скриптом.",
+                style={"fontSize": "12px", "color": TEXT_MUTED, "marginTop": "4px", "lineHeight": "1.5"},
+            ),
+        ], style={"padding": "16px", "background": "#f7f8fb", "borderRadius": "10px"})
+        return html.Div([link_row, body] if link_row else [body])
+
+    well_rows = df[df["Скважина"] == str(well)] if "Скважина" in df.columns else df.iloc[0:0]
+
+    if well_rows.empty:
+        body = html.Div(f"Для скважины {well} мероприятий не найдено в загруженном файле.",
+                         style={"fontSize": "12px", "color": TEXT_MUTED, "padding": "12px"})
+        return html.Div([link_row, body] if link_row else [body])
+
+    header_cells = [c for c in MEROPRIYATIYA_COLUMNS if c in well_rows.columns and c != "Ссылка"]
+    table_head = html.Thead(html.Tr([
+        html.Th(c, style={"textAlign": "left", "fontSize": "11px", "color": TEXT_MUTED,
+                           "padding": "6px 8px", "borderBottom": f"1px solid {BORDER_SOFT}"})
+        for c in header_cells + (["Ссылка"] if "Ссылка" in well_rows.columns else [])
+    ]))
+    body_rows = []
+    for _, r in well_rows.iterrows():
+        cells = [html.Td(str(r.get(c, "")), style={"fontSize": "12px", "color": TEXT_DARK,
+                                                      "padding": "6px 8px", "borderBottom": f"1px solid {BORDER_SOFT}"})
+                  for c in header_cells]
+        if "Ссылка" in well_rows.columns:
+            url = str(r.get("Ссылка", "") or "")
+            link_cell = html.Td(
+                html.A("Открыть →", href=url, target="_blank",
+                       style={"fontSize": "12px", "color": GREEN_DARK, "fontWeight": "600", "textDecoration": "none"})
+                if url and url.lower() != "nan" else "—",
+                style={"padding": "6px 8px", "borderBottom": f"1px solid {BORDER_SOFT}"},
+            )
+            cells.append(link_cell)
+        body_rows.append(html.Tr(cells))
+
+    table = html.Table([table_head, html.Tbody(body_rows)], style={"width": "100%", "borderCollapse": "collapse"})
+    return html.Div([link_row, table] if link_row else [table])
+
+
 def build_well_detail(df_period: pd.DataFrame, well: str):
     d = df_period[df_period["well"].astype(str) == str(well)]
     if d.empty:
@@ -539,43 +967,54 @@ def build_well_detail(df_period: pd.DataFrame, well: str):
 
     header = html.Div([
         html.Div([
-            html.Span(f"Скважина {well}", style={"fontSize": "18px", "fontWeight": "700"}),
-            html.Span(last["field"], style={"fontSize": "12px", "color": "#888", "marginLeft": "10px"}),
+            html.Span(f"Скважина {well}", style={"fontSize": "18px", "fontWeight": "700", "color": TEXT_DARK}),
+            html.Span(last["field"], style={"fontSize": "12px", "color": TEXT_MUTED, "marginLeft": "10px"}),
             html.Span(label, style={
                 "marginLeft": "10px", "fontSize": "11px", "fontWeight": "700", "color": "white",
                 "background": color, "padding": "2px 10px", "borderRadius": "10px",
             }),
-            html.Span(f"Режим: {mode}", style={"fontSize": "11px", "color": "#888", "marginLeft": "10px"}),
+            html.Span(f"Режим: {mode}", style={"fontSize": "11px", "color": TEXT_MUTED, "marginLeft": "10px"}),
         ]),
         html.Button("✕", id="btn-close-detail", n_clicks=0, style={
             "border": "none", "background": "none", "fontSize": "20px",
-            "cursor": "pointer", "color": "#888", "lineHeight": "1",
+            "cursor": "pointer", "color": TEXT_MUTED, "lineHeight": "1",
         }),
     ], style={"display": "flex", "justifyContent": "space-between", "alignItems": "center", "marginBottom": "14px"})
 
     kpis = html.Div([
-        kpi_card("⚡", "ЭЭ факт, кВт·ч", fmt(d["electricity_fact"].sum())),
-        kpi_card("🔌", "ЭЭ расч, кВт·ч", fmt(d["electricity_plan"].sum())),
-        kpi_card("💧", "Жидкость, м³", fmt(d["liquid"].sum())),
-        kpi_card("🛢️", "Нефть, т", fmt(d["oil"].sum())),
-        kpi_card("⚡", "УРЭ факт, кВт·ч/м³", f"{ure_f:.2f}"),
-        kpi_card("📈", "Откл. УРЭ, %", f"{dev:+.1f}", accent=True),
+        kpi_card("bolt", "ЭЭ факт, кВт·ч", fmt(d["electricity_fact"].sum()), color=PURPLE),
+        kpi_card("plug", "ЭЭ расч, кВт·ч", fmt(d["electricity_plan"].sum()), color=BLUE),
+        kpi_card("droplet", "Жидкость, м³", fmt(d["liquid"].sum()), color=TEAL),
+        kpi_card("barrel", "Нефть, т", fmt(d["oil"].sum()), color=YELLOW),
+        kpi_card("gauge", "УРЭ факт, кВт·ч/м³", f"{ure_f:.2f}", color=GREEN_DARK),
+        kpi_card("trend", "Откл. УРЭ, %", f"{dev:+.1f}", accent=True),
     ], style={"display": "flex", "gap": "8px", "flexWrap": "wrap", "marginBottom": "14px"})
 
     charts = html.Div([
         html.Div([
             html.Div("Динамика УРЭ и дебита жидкости",
-                     style={"fontWeight": "700", "fontSize": "13px", "marginBottom": "4px"}),
+                     style={"fontWeight": "700", "fontSize": "13px", "marginBottom": "4px", "color": TEXT_DARK}),
             dcc.Graph(figure=build_well_trend_fig(df_period, well), config={"displayModeBar": False}),
         ], style={"flex": "1.4", "minWidth": "300px"}),
         html.Div([
             html.Div("Скважина vs среднее по месторождению",
-                     style={"fontWeight": "700", "fontSize": "13px", "marginBottom": "4px"}),
+                     style={"fontWeight": "700", "fontSize": "13px", "marginBottom": "4px", "color": TEXT_DARK}),
             dcc.Graph(figure=build_well_compare_bar(df_period, well), config={"displayModeBar": False}),
         ], style={"flex": "1", "minWidth": "220px"}),
     ], style={"display": "flex", "gap": "16px", "flexWrap": "wrap"})
 
-    return html.Div([header, kpis, charts])
+    tab_style = {"padding": "8px 4px", "border": "none", "borderBottom": "2px solid transparent",
+                 "fontSize": "13px", "color": TEXT_MUTED, "fontWeight": "600"}
+    tab_selected_style = {**tab_style, "borderBottom": f"2px solid {GREEN_DARK}", "color": TEXT_DARK}
+
+    sheets = dcc.Tabs([
+        dcc.Tab(label="Обзор", value="overview", style=tab_style, selected_style=tab_selected_style,
+                children=html.Div([kpis, charts], style={"paddingTop": "12px"})),
+        dcc.Tab(label="Мероприятия по снижению УРЭ", value="measures", style=tab_style, selected_style=tab_selected_style,
+                children=html.Div(build_meropriyatiya_section(well), style={"paddingTop": "12px"})),
+    ], value="overview", style={"borderBottom": f"1px solid {BORDER_SOFT}"})
+
+    return html.Div([header, sheets])
 
 
 # ════════════════════════════════════════════════
@@ -583,11 +1022,11 @@ def build_well_detail(df_period: pd.DataFrame, well: str):
 # ════════════════════════════════════════════════
 
 HEAT_COLORSCALE = [
-    [0.0,  GREEN_DARK],
-    [0.30, GREEN],
-    [0.55, YELLOW],
-    [0.78, ORANGE_MID],
-    [1.0,  ORANGE],
+    [0.0,  "#22C55E"],
+    [0.30, "#D8F3DC"],
+    [0.55, "#FFF3BF"],
+    [0.78, "#FFD6A5"],
+    [1.0,  "#F4ACB7"],
 ]
 
 
@@ -621,7 +1060,7 @@ def make_heatmap(df: pd.DataFrame, group_by: str = "field"):
     values  = list(groups["size"]) + list(agg["size"])
     colors  = list(groups["dev"]) + list(agg["dev_clip"])
     text = [f"<b>{g}</b>" for g in groups[group_col].astype(str)] + [
-        f"<b>{w}</b><br>ЭЭ {e:,.0f}<br>УРЭ {uf:.1f}/{up:.1f}".replace(",", " ")
+        f"﻿<b>{w}</b><br>ЭЭ {e:,.0f}<br>УРЭ {uf:.1f}/{up:.1f}".replace(",", " ")
         for w, e, uf, up in zip(agg["well"].astype(str), agg["electricity"], agg["ure_fact"], agg["ure_plan"])
     ]
     hover = [f"{g}<extra></extra>" for g in groups[group_col].astype(str)] + [
@@ -631,18 +1070,18 @@ def make_heatmap(df: pd.DataFrame, group_by: str = "field"):
 
     fig = go.Figure(go.Treemap(
         labels=labels, parents=parents, values=values, branchvalues="total",
-        text=text, texttemplate="%{text}", textfont=dict(size=11, color="white"),
+        text=text, texttemplate="%{text}", textfont=dict(size=11, color=TEXT_DARK),
         hovertemplate=hover,
         marker=dict(
             colors=colors, colorscale=HEAT_COLORSCALE, cmin=-10, cmax=35,
-            line=dict(width=1.5, color="white"),
-            colorbar=dict(title="Откл УРЭ,%", thickness=12, len=0.8),
+            line=dict(width=2, color="#ffffff"),
+            colorbar=dict(title="Откл УРЭ,%", thickness=12, len=0.8, tickfont=dict(color=TEXT_DARK)),
         ),
-        pathbar=dict(visible=True, textfont=dict(size=11)),
+        pathbar=dict(visible=True, textfont=dict(size=11, color=TEXT_DARK)),
     ))
     fig.update_layout(
         height=560, margin=dict(l=5, r=5, t=30, b=5),
-        paper_bgcolor=CARD_BG, font={"family": "Arial"},
+        paper_bgcolor=CARD_BG, font={"family": "Arial", "color": TEXT_DARK},
     )
     return fig
 
@@ -651,20 +1090,24 @@ def make_heatmap(df: pd.DataFrame, group_by: str = "field"):
 #  ВСПОМОГАТЕЛЬНЫЕ КОМПОНЕНТЫ
 # ════════════════════════════════════════════════
 
-def kpi_card(icon, title, value, accent=False):
-    border    = f"2px solid {ORANGE}" if accent else "1px solid #e0e0e0"
-    val_color = ORANGE if accent else "#1a1a2e"
+def kpi_card(icon_name, title, value, accent=False, color=None):
+    color = color or (ORANGE if accent else GREEN_DARK)
+    badge_bg = with_alpha(color, 0.14)
     return html.Div([
-        html.Span(icon, style={"fontSize":"20px","marginRight":"8px"}),
+        html.Div(svg_icon(icon_name, color=color, size=18), style={
+            "width": "36px", "height": "36px", "borderRadius": "10px",
+            "background": badge_bg, "display": "flex", "alignItems": "center",
+            "justifyContent": "center", "marginRight": "10px", "flexShrink": "0",
+        }),
         html.Div([
-            html.Div(title, style={"fontSize":"10px","color":"#777","lineHeight":"1.3"}),
-            html.Div(value, style={"fontSize":"20px","fontWeight":"700","color":val_color}),
+            html.Div(title, style={"fontSize": "10px", "color": TEXT_MUTED, "lineHeight": "1.3"}),
+            html.Div(value, style={"fontSize": "19px", "fontWeight": "700", "color": TEXT_DARK}),
         ])
     ], style={
-        "display":"flex","alignItems":"center",
-        "background":CARD_BG,"border":border,"borderRadius":"8px",
-        "padding":"10px 14px","flex":"1","minWidth":"130px",
-        "boxShadow":"0 1px 4px rgba(0,0,0,0.07)"
+        "display": "flex", "alignItems": "center",
+        "background": CARD_BG, "border": f"1px solid {BORDER_SOFT}", "borderRadius": "12px",
+        "padding": "10px 14px", "flex": "1", "minWidth": "150px",
+        "boxShadow": glow(color, 0.10),
     })
 
 
@@ -693,7 +1136,7 @@ def mode_panel(df: pd.DataFrame):
                 html.Span("■ ", style={"color":MODE_COLORS[m],"fontSize":"13px"}),
                 html.Span(m, style={"fontSize":"13px","color":"#555"}),
             ])
-        ], style={"background":"#f9f9f9","borderRadius":"8px","padding":"10px","textAlign":"center"})
+        ], style={"background":"#f9f9f9","borderRadius":"14px","padding":"10px","textAlign":"center"})
         for m in MODES
     ], style={"display":"grid","gridTemplateColumns":"1fr 1fr","gap":"8px"})
 
@@ -704,8 +1147,8 @@ def period_buttons(active="1м"):
     buttons = []
     for p in PERIODS:
         active_style = {
-            "background": ORANGE, "color": "white",
-            "border": f"1px solid {ORANGE}", "fontWeight": "700"
+            "background": BLUE, "color": "white",
+            "border": f"1px solid {BLUE}", "fontWeight": "700"
         }
         idle_style = {
             "background": CARD_BG, "color": GREY_DARK,
@@ -720,37 +1163,73 @@ def period_buttons(active="1м"):
     return html.Div(buttons, style={"display":"flex","gap":"6px"})
 
 
-TABS = [("overview", "Обзор"), ("heatmap", "Тепловая карта")]
+TABS = [
+    ("overview", "Обзор", "home"),
+    ("heatmap",  "Тепловая карта", "grid"),
+    ("trends",   "Основные рекомендации", "chart-line"),
+    ("rating",   "Рейтинг скважин", "list"),
+]
 
 
 def tab_buttons(active="overview"):
     buttons = []
-    for val, label in TABS:
-        active_style = {
-            "background": GREEN_DARK, "color": "white",
-            "border": f"1px solid {GREEN_DARK}", "fontWeight": "700",
-        }
-        idle_style = {
-            "background": CARD_BG, "color": GREY_DARK,
-            "border": "1px solid #ddd", "fontWeight": "400",
-        }
+    for val, label, icon in TABS:
+        is_active = val == active
+        color = "#ffffff" if is_active else TEXT_DARK
         style = {
-            **(active_style if val == active else idle_style),
-            "padding": "6px 18px", "borderRadius": "5px",
+            "background": BLUE if is_active else CARD_BG,
+            "color": color,
+            "border": f"1px solid {BLUE if is_active else BORDER_SOFT}",
+            "fontWeight": "700" if is_active else "500",
+            "padding": "7px 16px", "borderRadius": "10px",
             "cursor": "pointer", "fontSize": "13px",
+            "display": "flex", "alignItems": "center", "gap": "7px",
         }
-        buttons.append(html.Button(label, id=f"btn-tab-{val}", n_clicks=0, style=style))
-    return html.Div(buttons, style={"display": "flex", "gap": "8px"})
+        buttons.append(html.Button([
+            svg_icon(icon, color=color, size=15), html.Span(label),
+        ], id=f"btn-tab-{val}", n_clicks=0, style=style))
+    return html.Div(buttons, style={"display": "flex", "gap": "8px", "flexWrap": "wrap"})
 
 
 # ════════════════════════════════════════════════
 #  APP LAYOUT
 # ════════════════════════════════════════════════
 
-# app = dash.Dash(__name__, title="Анализ энергопотребления скважин", suppress_callback_exceptions=True)
-app = dash.Dash(__name__, title="Анализ энергопотребления скважин", suppress_callback_exceptions=True)
+app = dash.Dash(
+    __name__, title="Анализ энергопотребления скважин",
+    suppress_callback_exceptions=True,
+    assets_url_path="",   # logo.png отдаётся как /logo.png — без префикса /assets/
+)
 server = app.server
 
+app.index_string = """
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+        <style>
+            html, body { font-family: 'Inter', Arial, sans-serif; }
+            ::-webkit-scrollbar { width: 8px; height: 8px; }
+            ::-webkit-scrollbar-thumb { background: #d7d9e0; border-radius: 8px; }
+            details > summary { list-style: none; }
+            details > summary::-webkit-details-marker { display: none; }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+"""
 app.layout = html.Div([
 
     # ── Хранилище состояния ──────────────────────
@@ -761,7 +1240,7 @@ app.layout = html.Div([
     # ── Шапка ────────────────────────────────────
     html.Div([
         html.Img(
-        src="/assets/logo.png",
+        src="/logo.png",  # поместите logo.png рядом с dashboard.py в папке assets/
         style={
             "maxWidth": "100%",
             "height": "50px",
@@ -798,7 +1277,7 @@ app.layout = html.Div([
     ], style={
         "display":"flex","justifyContent":"space-between","alignItems":"center",
         "flexWrap":"wrap","gap":"10px",
-        "padding":"12px 20px","background":CARD_BG,"borderBottom":"2px solid #e0e0e0"
+        "padding":"12px 20px","background":CARD_BG,"borderBottom":"2px solid #e9eaef"
     }),
 
     # ── Вкладки + группировка тепловой карты ──────
@@ -826,16 +1305,33 @@ app.layout = html.Div([
 
         # Левая колонка — список скважин
         html.Div([
-            html.Div("Скважины", style={
+            html.Div("Месторождения и скважины", style={
                 "fontWeight": "700", "fontSize": "14px", "marginBottom": "8px", "padding": "0 2px",
+                "color": TEXT_DARK,
+            }),
+            html.Div([
+                svg_icon("search", color=TEXT_MUTED, size=15),
+                dcc.Input(
+                    id="well-search", type="text", placeholder="Поиск скважины…",
+                    debounce=True,
+                    style={
+                        "border": "none", "outline": "none", "fontSize": "13px",
+                        "marginLeft": "6px", "width": "100%", "background": "transparent",
+                        "color": TEXT_DARK,
+                    },
+                ),
+            ], style={
+                "display": "flex", "alignItems": "center", "background": "#f5f6fa",
+                "border": f"1px solid {BORDER_SOFT}", "borderRadius": "9px",
+                "padding": "6px 10px", "marginBottom": "10px",
             }),
             html.Div(id="sidebar-container", style={
-                "maxHeight": "76vh", "overflowY": "auto", "paddingRight": "4px",
+                "maxHeight": "72vh", "overflowY": "auto", "paddingRight": "4px",
             }),
         ], style={
-            "width": "260px", "minWidth": "220px", "background": CARD_BG,
-            "border": "1px solid #e0e0e0", "borderRadius": "8px", "padding": "12px",
-            "boxShadow": "0 1px 4px rgba(0,0,0,0.07)", "alignSelf": "flex-start",
+            "width": "270px", "minWidth": "230px", "background": CARD_BG,
+            "border": "1px solid #e9eaef", "borderRadius": "14px", "padding": "12px",
+            "boxShadow": "0 4px 16px rgba(20,23,28,0.06)", "alignSelf": "flex-start",
         }),
 
         # Правая колонка — контент активной вкладки
@@ -879,7 +1375,7 @@ def refresh_period_buttons(period):
 
 @app.callback(
     Output("store-active-tab", "data"),
-    [Input(f"btn-tab-{val}", "n_clicks") for val, _ in TABS],
+    [Input(f"btn-tab-{val}", "n_clicks") for val, _, _ in TABS],
     State("store-active-tab", "data"),
     prevent_initial_call=True,
 )
@@ -904,7 +1400,6 @@ def refresh_tab_nav(tab):
 @app.callback(
     [
         Output("dropdown-field",      "options"),
-        Output("sidebar-container",   "children"),
         Output("page-content",        "children"),
         Output("last-update-label",   "children"),
     ],
@@ -917,7 +1412,7 @@ def refresh_tab_nav(tab):
     ],
 )
 def render_page(n_clicks, field, period, tab, group_by):
-    """Единая точка сборки страницы: боковой список скважин + контент активной вкладки."""
+    """Единая точка сборки контента активной вкладки."""
     df_all = load_data()
 
     fields = sorted(df_all["field"].unique())
@@ -926,28 +1421,124 @@ def render_page(n_clicks, field, period, tab, group_by):
 
     df = filter_df(df_all, field or "ALL", period or "1м")
     ts = datetime.now().strftime("Обновлено: %d.%m.%Y %H:%M:%S")
-    sidebar = build_sidebar_wells(df)
 
     if df.empty:
         empty_msg = html.Div("Нет данных за выбранный период", style={
-            "padding": "60px 20px", "textAlign": "center", "color": "#999",
-            "background": CARD_BG, "border": "1px solid #e0e0e0", "borderRadius": "8px",
+            "padding": "60px 20px", "textAlign": "center", "color": TEXT_MUTED,
+            "background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
         })
-        return field_options, sidebar, empty_msg, ts
+        return field_options, empty_msg, ts
 
     if tab == "heatmap":
         content = html.Div([
             html.Div("Тепловая карта скважин по УРЭ",
-                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px"}),
+                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px", "color": TEXT_DARK}),
             html.Div("Размер блока — добыча жидкости, цвет — отклонение УРЭ факт от расчёта",
                      style={"fontSize": "11px", "color": ORANGE, "marginBottom": "6px"}),
             dcc.Graph(id="graph-heatmap", figure=make_heatmap(df, group_by or "field"),
                        config={"displayModeBar": False}),
         ], style={
-            "background": CARD_BG, "border": "1px solid #e0e0e0", "borderRadius": "8px",
-            "padding": "14px", "boxShadow": "0 1px 4px rgba(0,0,0,0.07)",
+            "background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+            "padding": "14px", "boxShadow": "0 4px 16px rgba(20,23,28,0.06)",
         })
-        return field_options, sidebar, content, ts
+        return field_options, content, ts
+
+    if tab == "trends":
+        insights = generate_insights(df)
+        insight_rows = []
+        for it in insights:
+            insight_rows.append(html.Div([
+                html.Div(svg_icon(it["icon"], color=it["color"], size=17), style={
+                    "width": "34px", "height": "34px", "borderRadius": "10px",
+                    "background": with_alpha(it["color"], 0.14), "display": "flex",
+                    "alignItems": "center", "justifyContent": "center", "flexShrink": "0",
+                }),
+                html.Div([
+                    html.Div(it["title"], style={"fontSize": "13px", "fontWeight": "700", "color": TEXT_DARK}),
+                    html.Div(it["text"], style={"fontSize": "12px", "color": TEXT_MUTED, "marginTop": "2px", "lineHeight": "1.4"}),
+                ], style={"marginLeft": "10px", "flex": "1"}),
+                svg_icon("chevron", color=TEXT_MUTED, size=14),
+            ], style={
+                "display": "flex", "alignItems": "flex-start", "padding": "12px 4px",
+                "borderBottom": f"1px solid {BORDER_SOFT}",
+            }))
+
+        insights_card = html.Div([
+            html.Div([svg_icon("bulb", color=GREEN_DARK, size=16),
+                      html.Span("Предложения и рекомендации",
+                                style={"fontWeight": "700", "fontSize": "14px", "marginLeft": "8px", "color": TEXT_DARK}),
+                      html.Span("AI-аналитика", style={
+                          "marginLeft": "auto", "fontSize": "10px", "fontWeight": "700", "color": GREEN_DARK,
+                          "background": with_alpha(GREEN_DARK, 0.12), "padding": "3px 9px", "borderRadius": "9px",
+                      })],
+                     style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
+            html.Div(insight_rows, style={"marginTop": "4px"}),
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+                  "padding": "16px", "boxShadow": "0 4px 16px rgba(20,23,28,0.06)", "marginBottom": "12px"})
+
+        charts_row = html.Div([
+            html.Div([
+                html.Div("Динамика УРЭ факт/расчёт", style={"fontWeight": "700", "fontSize": "14px", "color": TEXT_DARK}),
+                dcc.Graph(figure=make_trend(df), config={"displayModeBar": False}),
+            ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+                      "padding": "14px", "flex": "1", "minWidth": "320px",
+                      "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"}),
+            html.Div([
+                html.Div("Потребление электроэнергии по дням", style={"fontWeight": "700", "fontSize": "14px", "color": TEXT_DARK}),
+                dcc.Graph(figure=make_consumption_trend(df), config={"displayModeBar": False}),
+            ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+                      "padding": "14px", "flex": "1", "minWidth": "320px",
+                      "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"}),
+        ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "12px"})
+
+        overconsumption_card = html.Div([
+            html.Div("ТОП по перерасходу электроэнергии", style={"fontWeight": "700", "fontSize": "14px", "color": TEXT_DARK}),
+            html.Div("Скв. | сверх плана, тыс.кВт·ч", style={"fontSize": "11px", "color": ORANGE, "marginBottom": "6px"}),
+            dcc.Graph(figure=make_overconsumption_bar(df), config={"displayModeBar": False}),
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+                  "padding": "14px", "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"})
+
+        return field_options, html.Div([insights_card, charts_row, overconsumption_card]), ts
+
+    if tab == "rating":
+        rating_card = html.Div([
+            html.Div("Рейтинг скважин фонда", style={"fontWeight": "700", "fontSize": "14px", "color": TEXT_DARK}),
+            html.Div("Сортировка и фильтрация по любому столбцу",
+                     style={"fontSize": "11px", "color": ORANGE, "marginBottom": "10px"}),
+            build_rating_table(df),
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+                  "padding": "14px", "boxShadow": "0 4px 16px rgba(20,23,28,0.06)", "marginBottom": "12px"})
+
+        upload_card = html.Div([
+            html.Div([svg_icon("upload", color=GREEN_DARK, size=16),
+                      html.Span("Мероприятия по снижению УРЭ",
+                                style={"fontWeight": "700", "fontSize": "14px", "marginLeft": "8px", "color": TEXT_DARK})],
+                     style={"display": "flex", "alignItems": "center", "marginBottom": "4px"}),
+            html.Div(
+                "Загрузите сюда единый Excel-файл со всеми мероприятиями по фонду — колонки: "
+                "«Скважина", "Мероприятие", "Рекомендации", "Возможная экономия электроэнергии, кВт». "
+                "После загрузки они появятся на листе «Мероприятия» в карточке каждой скважины "
+                f"(файл сохраняется как {MEROPRIYATIYA_PATH}, доступен по ссылке /meropriyatiya.xlsx).",
+                style={"fontSize": "12px", "color": TEXT_MUTED, "marginBottom": "10px", "lineHeight": "1.5"},
+            ),
+            dcc.Upload(
+                id="upload-meropriyatiya",
+                children=html.Div([
+                    svg_icon("upload", color=GREY_LIGHT, size=22),
+                    html.Div("Перетащите файл сюда или нажмите, чтобы выбрать (.xlsx)",
+                             style={"fontSize": "12px", "color": TEXT_MUTED, "marginTop": "6px"}),
+                ], style={"textAlign": "center", "padding": "22px"}),
+                style={
+                    "border": f"2px dashed {BORDER_SOFT}", "borderRadius": "12px",
+                    "background": "#f7f8fb", "cursor": "pointer",
+                },
+                multiple=False,
+            ),
+            html.Div(id="upload-meropriyatiya-status", style={"fontSize": "12px", "marginTop": "8px", "color": GREEN_DARK}),
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+                  "padding": "16px", "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"})
+
+        return field_options, html.Div([rating_card, upload_card]), ts
 
     # ── Вкладка «Обзор» ────────────────────────────
     e_fact  = int(df["electricity_fact"].sum())
@@ -961,64 +1552,82 @@ def render_page(n_clicks, field, period, tab, group_by):
     def fmt(n): return f"{n:,}".replace(",", " ")
 
     kpi_row = html.Div([
-        kpi_card("⚡", "Электроэнергия, кВт·ч",      fmt(e_fact)),
-        kpi_card("🔌", "Электроэнергия расч., кВт·ч", fmt(e_plan)),
-        kpi_card("💧", "Добыча жидкости, м³",          fmt(liquid)),
-        kpi_card("🛢️", "Добыча нефти, т",              fmt(oil)),
-        kpi_card("⚡", "УРЭ факт, кВт·ч/м³",           f"{ure_f:.2f}"),
-        kpi_card("📋", "УРЭ расч., кВт·ч/м³",          f"{ure_p:.2f}"),
-        kpi_card("📈", "Отклонение УРЭ, %",             f"{dev:.2f}", accent=True),
+        kpi_card("bolt", "Электроэнергия, кВт·ч",      fmt(e_fact), color=PURPLE),
+        kpi_card("plug", "Электроэнергия расч., кВт·ч", fmt(e_plan), color=BLUE),
+        kpi_card("droplet", "Добыча жидкости, м³",          fmt(liquid), color=TEAL),
+        kpi_card("barrel", "Добыча нефти, т",              fmt(oil), color=YELLOW),
+        kpi_card("gauge", "УРЭ факт, кВт·ч/м³",           f"{ure_f:.2f}", color=GREEN_DARK),
+        kpi_card("clipboard", "УРЭ расч., кВт·ч/м³",          f"{ure_p:.2f}", color=BLUE),
+        kpi_card("trend", "Отклонение УРЭ, %",             f"{dev:.2f}", accent=True),
     ], style={"display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "12px"})
 
     middle_row = html.Div([
         html.Div([
             html.Div("Анализ энергопотребления",
-                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px"}),
+                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px", "color": TEXT_DARK}),
             html.Div("Скв. | УРЭ факт, кВт·ч/м³",
                      style={"fontSize": "11px", "color": ORANGE, "marginBottom": "6px"}),
             dcc.Graph(figure=make_gauge(ure_f, df), config={"displayModeBar": False}),
-        ], style={"background": CARD_BG, "border": "1px solid #e0e0e0", "borderRadius": "8px",
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
                   "padding": "14px", "flex": "1.1", "minWidth": "260px",
-                  "boxShadow": "0 1px 4px rgba(0,0,0,0.07)"}),
+                  "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"}),
 
         html.Div([
             html.Div("ТОП лучших скважин",
-                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px"}),
+                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px", "color": TEXT_DARK}),
             html.Div("Скв. | УРЭ факт, кВт·ч/м³",
                      style={"fontSize": "11px", "color": ORANGE, "marginBottom": "6px"}),
             dcc.Graph(figure=make_top_best(df), config={"displayModeBar": False}),
-        ], style={"background": CARD_BG, "border": "1px solid #e0e0e0", "borderRadius": "8px",
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
                   "padding": "14px", "flex": "1", "minWidth": "220px",
-                  "boxShadow": "0 1px 4px rgba(0,0,0,0.07)"}),
+                  "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"}),
 
         html.Div([
             html.Div("ТОП худших скважин",
-                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px"}),
+                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "2px", "color": TEXT_DARK}),
             html.Div("Скв. | УРЭ факт, кВт·ч/м³",
                      style={"fontSize": "11px", "color": ORANGE, "marginBottom": "6px"}),
             dcc.Graph(figure=make_top_worst(df), config={"displayModeBar": False}),
-        ], style={"background": CARD_BG, "border": "1px solid #e0e0e0", "borderRadius": "8px",
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
                   "padding": "14px", "flex": "1", "minWidth": "220px",
-                  "boxShadow": "0 1px 4px rgba(0,0,0,0.07)"}),
+                  "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"}),
 
         html.Div([
             html.Div("Режимы работы скважин",
-                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "12px"}),
+                     style={"fontWeight": "700", "fontSize": "14px", "marginBottom": "12px", "color": TEXT_DARK}),
             mode_panel(df),
-        ], style={"background": CARD_BG, "border": "1px solid #e0e0e0", "borderRadius": "8px",
+        ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
                   "padding": "14px", "flex": "0.9", "minWidth": "200px",
-                  "boxShadow": "0 1px 4px rgba(0,0,0,0.07)"}),
+                  "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"}),
+
+        html.Div(build_quick_summary(df), style={"flex": "0.9", "minWidth": "220px"}),
     ], style={"display": "flex", "gap": "12px", "flexWrap": "wrap", "marginBottom": "12px"})
 
     consumption_row = html.Div([
-        html.Span("Потребление электроэнергии, ", style={"fontWeight": "700", "fontSize": "14px"}),
-        html.Span("тыс.кВт·ч", style={"fontWeight": "900", "fontSize": "14px"}),
+        html.Span("Потребление электроэнергии, ", style={"fontWeight": "700", "fontSize": "14px", "color": TEXT_DARK}),
+        html.Span("тыс.кВт·ч", style={"fontWeight": "900", "fontSize": "14px", "color": TEXT_DARK}),
         dcc.Graph(figure=make_consumption(df), config={"displayModeBar": False}),
-    ], style={"background": CARD_BG, "border": "1px solid #e0e0e0", "borderRadius": "8px",
-              "padding": "14px", "boxShadow": "0 1px 4px rgba(0,0,0,0.07)"})
+    ], style={"background": CARD_BG, "border": "1px solid #e9eaef", "borderRadius": "14px",
+              "padding": "14px", "boxShadow": "0 4px 16px rgba(20,23,28,0.06)"})
 
     content = html.Div([kpi_row, middle_row, consumption_row])
-    return field_options, sidebar, content, ts
+    return field_options, content, ts
+
+
+# ── Боковая панель (месторождения → скважины + поиск) ─
+@app.callback(
+    Output("sidebar-container", "children"),
+    [
+        Input("btn-refresh",    "n_clicks"),
+        Input("dropdown-field", "value"),
+        Input("store-period",   "data"),
+        Input("well-search",    "value"),
+    ],
+)
+def render_sidebar(n_clicks, field, period, search_term):
+    df_all = load_data()
+    df = filter_df(df_all, field or "ALL", period or "1м")
+    return build_sidebar_wells(df, search_term)
 
 
 # ── Выбор скважины из бокового списка ─────────────
@@ -1060,6 +1669,28 @@ def select_well_heatmap(click_data):
 )
 def close_well_detail(n_clicks):
     return None
+
+
+# ── Сохранение загруженного Excel с мероприятиями ─
+@app.callback(
+    Output("upload-meropriyatiya-status", "children"),
+    Input("upload-meropriyatiya", "contents"),
+    State("upload-meropriyatiya", "filename"),
+    prevent_initial_call=True,
+)
+def save_uploaded_meropriyatiya(contents, filename):
+    if contents is None:
+        raise PreventUpdate
+    try:
+        _content_type, content_string = contents.split(",", 1)
+        decoded = base64.b64decode(content_string)
+        os.makedirs(MEROPRIYATIYA_DIR, exist_ok=True)
+        with open(MEROPRIYATIYA_PATH, "wb") as f:
+            f.write(decoded)
+        check_df = pd.read_excel(MEROPRIYATIYA_PATH)
+        return f"✅ «{filename}» загружен, строк: {len(check_df)}. Откройте карточку скважины → лист «Мероприятия»."
+    except Exception as e:
+        return f"⚠️ Не удалось прочитать файл: {e}"
 
 
 # ── Рендер модального окна с деталями скважины ────

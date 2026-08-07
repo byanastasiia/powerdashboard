@@ -1,8 +1,5 @@
-os
 pandas
-json
 numpy
-datetime
 dash
-dash.exceptions
-plotly.graph_objects
+plotly
+gunicorn

@@ -35,9 +35,6 @@ import plotly.graph_objects as go
 
 from dash import Dash
 
-app = Dash(__name__)
-server = app.server
-
 # ════════════════════════════════════════════════
 #  ПУТЬ К ФАЙЛУ — поменяйте на свой
 # ════════════════════════════════════════════════
@@ -750,7 +747,10 @@ def tab_buttons(active="overview"):
 #  APP LAYOUT
 # ════════════════════════════════════════════════
 
+# app = dash.Dash(__name__, title="Анализ энергопотребления скважин", suppress_callback_exceptions=True)
 app = dash.Dash(__name__, title="Анализ энергопотребления скважин", suppress_callback_exceptions=True)
+server = app.server
+
 app.layout = html.Div([
 
     # ── Хранилище состояния ──────────────────────

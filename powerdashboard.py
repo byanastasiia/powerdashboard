@@ -33,6 +33,8 @@ from dash import dcc, html, Input, Output, State, callback_context, ALL
 from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
 
+from dash import Dash
+
 app = Dash(__name__)
 server = app.server
 

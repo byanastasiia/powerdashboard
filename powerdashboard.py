@@ -519,13 +519,13 @@ def make_consumption(df: pd.DataFrame):
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        name="Фактическое потребление", x=agg["well"], y=agg["fact_k"],
+        name="Факт", x=agg["well"], y=agg["fact_k"],
         marker_color=GREY_DARK,
         text=agg["fact_k"], textposition="outside", textfont=dict(size=11),
         hovertemplate="%{x}: %{y} тыс.кВт·ч<extra></extra>"
     ))
     fig.add_trace(go.Bar(
-        name="Расчётное потребление", x=agg["well"], y=agg["plan_k"],
+        name="План", x=agg["well"], y=agg["plan_k"],
         marker_color=GREY_MID,
         text=agg["plan_k"], textposition="outside", textfont=dict(size=11),
         hovertemplate="%{x}: %{y} тыс.кВт·ч<extra></extra>"

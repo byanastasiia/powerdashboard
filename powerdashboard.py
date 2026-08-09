@@ -533,7 +533,7 @@ def make_consumption(df: pd.DataFrame):
     ymax = max(agg["fact_k"].max(), agg["plan_k"].max()) * 1.25 if len(agg) else 100
     fig.update_layout(
         barmode="group", bargap=0.15, bargroupgap=0.02,
-        height=250, margin=dict(l=40,r=150,t=30,b=40),
+        height=240, margin=dict(l=50,r=20,t=25,b=40),
         paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
         yaxis=dict(range=[0, ymax], gridcolor="#eeeeee", title="тыс.кВт·ч", title_font=dict(size=11)),
         xaxis=dict(tickfont=dict(size=11, weight='bold')),

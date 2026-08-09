@@ -1,0 +1,23 @@
+.dash-header .column-actions {
+    order: 2;
+    margin-left: 6px;
+}
+
+.dash-header .column-header-name {
+    order: 1;
+}
+/* ── Мобильная адаптация: сайдбар и контент друг под другом ── */
+@media (max-width: 768px) {
+    .body-row {
+        flex-direction: column;
+    }
+
+    .sidebar-col {
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    .sidebar-col #sidebar-container {
+        max-height: 45vh;   /* список скважин не съедает весь экран телефона */
+    }
+}

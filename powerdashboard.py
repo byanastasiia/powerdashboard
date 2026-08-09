@@ -537,7 +537,7 @@ def make_consumption(df: pd.DataFrame):
         paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
         yaxis=dict(range=[0, ymax], gridcolor="#eeeeee", title="тыс.кВт·ч", title_font=dict(size=11)),
         xaxis=dict(tickfont=dict(size=11, weight='bold')),
-        legend=dict(orientation="v", x=1.01, y=1, font=dict(size=11)),
+        legend=dict(orientation="h", y=1.15, x=0, font=dict(size=11)),
         font={"family":"Arial"}
     )
     return fig
@@ -2152,4 +2152,4 @@ def render_well_panel(well, period):
 
 # ════════════════════════════════════════════════
 if __name__ == "__main__":
-    app.run(debug=False, host='0.0.0.0', port=8050)
+    app.run(debug=True, host='0.0.0.0', port=8050)

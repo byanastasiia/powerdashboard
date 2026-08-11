@@ -43,6 +43,8 @@ from dash import Dash
 # ════════════════════════════════════════════════
 #  ПУТЬ К ФАЙЛУ — поменяйте на свой
 # ════════════════════════════════════════════════
+
+DEMO_MODE = True
 EXCEL_PATH = "data.xlsx"        # абсолютный или относительный путь
 EXCEL_SHEET = "data"            # имя листа
 
@@ -2032,6 +2034,8 @@ def save_uploaded_meropriyatiya(contents, filename):
 def save_uploaded_consumption(contents, filename, current_period):
     if contents is None:
         raise PreventUpdate
+    if DEMO_MODE:
+        return f"Демо-режим: изменения не будут сохранены.", dash.no_update
     try:
         _content_type, content_string = contents.split(",", 1)
         decoded = base64.b64decode(content_string)

@@ -1919,13 +1919,13 @@ def render_page(n_clicks, field, period, tab, group_by, consumption_tab):
 
     consumption_row = html.Div([
         dcc.Tabs([
-            dcc.Tab(label="Суммарное энергопотребление", value="period", style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE,
+            dcc.Tab(label="Энергопотребление", value="period", style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE,
                     children=html.Div(
                         dcc.Graph(figure=make_consumption_trend(df),
                                   config={"displayModeBar": False, "responsive": False}),
                         style={"paddingTop": "10px"},
                     )),
-            dcc.Tab(label="По скважинам", value="wells", style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE,
+            dcc.Tab(label="Энергопотребление по скважинам", value="wells", style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE,
                     children=html.Div(
                         dcc.Graph(figure=make_consumption(df), config={"displayModeBar": False, "responsive": False}),
                         style={"paddingTop": "10px"},
